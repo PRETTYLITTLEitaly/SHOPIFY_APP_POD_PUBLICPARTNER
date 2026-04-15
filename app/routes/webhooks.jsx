@@ -16,9 +16,10 @@ export const action = async ({ request }) => {
         query getProductMetafields($id: ID!) {
           product(id: $id) {
             id
-            metafields(first: 10, namespace: "pod") {
+            metafields(first: 50) {
               nodes {
                 id
+                namespace
                 key
                 value
                 updatedAt
@@ -38,9 +39,9 @@ export const action = async ({ request }) => {
       const data = await response.json();
       const metafields = data.data?.product?.metafields?.nodes || [];
       
-      const svgMeta = metafields.find(m => m.key === "svg");
-      const widthMeta = metafields.find(m => m.key === "width");
-      const heightMeta = metafields.find(m => m.key === "height");
+      const svgMeta = metafields.find(m => m.namespace === "pod" && m.key === "svg");
+      const widthMeta = metafields.find(m => m.namespace === "pod" && m.key === "width");
+      const heightMeta = metafields.find(m => m.namespace === "pod" && m.key === "height");
       
       const svgUrl = svgMeta?.reference?.url || svgMeta?.reference?.image?.url;
       const mediaImage = svgMeta?.reference?.image;
@@ -76,6 +77,17 @@ export const action = async ({ request }) => {
           }
 
           let metafieldsToSet = [];
+          
+          if (svgUrl) {
+            console.log(`--- SALVANDO URL SVG: ${svgUrl} ---`);
+            metafieldsToSet.push({
+              ownerId: productId,
+              namespace: "custom",
+              key: "pod_svg_url",
+              value: svgUrl,
+              type: "single_line_text_field"
+            });
+          }
           
           if (!widthMeta && !heightMeta) {
             // Se entrambi mancano, suggeriamo le dimensioni intrinseche

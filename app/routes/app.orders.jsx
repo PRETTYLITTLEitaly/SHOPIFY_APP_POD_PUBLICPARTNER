@@ -97,8 +97,9 @@ export const loader = async ({ request }) => {
               customAttributes { key value }
               product {
                 id
-                metafields(first: 10, namespace: "pod") {
+                metafields(first: 50) {
                   nodes {
+                    namespace
                     key
                     value
                     reference {
@@ -162,8 +163,9 @@ export const action = async ({ request }) => {
                     title
                     quantity
                     product {
-                      metafields(first: 10, namespace: "pod") {
+                      metafields(first: 50) {
                         nodes {
+                          namespace
                           key
                           value
                           reference {
@@ -193,8 +195,9 @@ export const action = async ({ request }) => {
             // Fetch all SVGs for an order in parallel
             await Promise.all(order.lineItems.nodes.map(async (item) => {
               const metafields = item.product?.metafields?.nodes || [];
-              const svgMeta = metafields.find(m => m.key === "svg");
-              const svgUrl = svgMeta?.reference?.url || svgMeta?.reference?.image?.url;
+              const svgMeta = metafields.find(m => m.namespace === "pod" && m.key === "svg");
+              const svgTextUrl = metafields.find(m => m.namespace === "custom" && m.key === "pod_svg_url")?.value;
+              const svgUrl = svgTextUrl || svgMeta?.reference?.url || svgMeta?.reference?.image?.url;
               if (svgUrl) {
                 try {
                   const svgRes = await fetch(svgUrl);

@@ -40,8 +40,9 @@ export const loader = async ({ request }) => {
           title
           vendor
           featuredImage { url }
-          metafields(first: 10, namespace: "pod") {
+          metafields(first: 50) {
             nodes {
+              namespace
               key
               value
               reference {
@@ -69,8 +70,9 @@ export const loader = async ({ request }) => {
 
   const processedProducts = await Promise.all(products.map(async (product) => {
     const metafields = product.metafields.nodes || [];
-    const svgMeta = metafields.find(m => m.key === "svg");
-    const svgUrl = svgMeta?.reference?.url || svgMeta?.reference?.image?.url;
+    const svgMeta = metafields.find(m => m.namespace === "pod" && m.key === "svg");
+    const svgTextUrl = metafields.find(m => m.namespace === "custom" && m.key === "pod_svg_url")?.value;
+    const svgUrl = svgTextUrl || svgMeta?.reference?.url || svgMeta?.reference?.image?.url;
     const mediaImage = svgMeta?.reference?.image;
     
     let ratio = 1;
