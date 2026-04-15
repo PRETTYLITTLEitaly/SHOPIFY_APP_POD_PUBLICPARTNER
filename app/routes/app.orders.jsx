@@ -127,14 +127,14 @@ export const action = async ({ request }) => {
               name
               tags
               status: metafield(namespace: "pod", key: "status") { value }
-              lineItems(first: 10) {
+              lineItems(first: 5) {
                 nodes {
                   id
                   title
                   quantity
                   product {
                     id
-                    metafields(first: 10) {
+                    pod_metafields: metafields(namespace: "pod", first: 5) {
                       nodes {
                         namespace
                         key
@@ -145,10 +145,17 @@ export const action = async ({ request }) => {
                         }
                       }
                     }
+                    custom_metafields: metafields(namespace: "custom", first: 5) {
+                      nodes {
+                        namespace
+                        key
+                        value
+                      }
+                    }
                   }
                   variant {
                     id
-                    metafields(first: 10) {
+                    pod_metafields: metafields(namespace: "pod", first: 5) {
                       nodes {
                         namespace
                         key
@@ -157,6 +164,13 @@ export const action = async ({ request }) => {
                           ... on GenericFile { url }
                           ... on MediaImage { image { url } }
                         }
+                      }
+                    }
+                    custom_metafields: metafields(namespace: "custom", first: 5) {
+                      nodes {
+                        namespace
+                        key
+                        value
                       }
                     }
                   }
