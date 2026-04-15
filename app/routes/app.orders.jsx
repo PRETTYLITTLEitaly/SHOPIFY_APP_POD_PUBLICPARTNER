@@ -449,7 +449,10 @@ export default function Orders() {
   }, 0);
 
   return (
-    <Page title="Ordini Print on Demand">
+    <Page 
+      title="Ordini Print on Demand"
+      primaryAction={{ content: "Libreria Font", url: "/app/fonts" }}
+    >
       <Layout>
         {error && (
           <Layout.Section>
