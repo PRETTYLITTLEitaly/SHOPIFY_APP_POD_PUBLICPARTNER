@@ -154,12 +154,14 @@ export const action = async ({ request }) => {
 
         for (const item of order.lineItems.nodes) {
           const metafields = item.product?.metafields?.nodes || [];
-          const widthVal = metafields.find(m => (m.namespace === "pod" || !m.namespace) && m.key === "width")?.value;
-          const heightVal = metafields.find(m => (m.namespace === "pod" || !m.namespace) && m.key === "height")?.value;
+          
+          // RICERCA UNIVERSALE (qualsiasi namespace)
+          const widthVal = metafields.find(m => m.key === "width")?.value;
+          const heightVal = metafields.find(m => m.key === "height")?.value;
           
           if (widthVal && heightVal) {
-            const svgMeta = metafields.find(m => m.namespace === "pod" && m.key === "svg");
-            const svgTextUrl = metafields.find(m => m.namespace === "custom" && m.key === "pod_svg_url")?.value;
+            const svgMeta = metafields.find(m => m.key === "svg");
+            const svgTextUrl = metafields.find(m => m.key === "pod_svg_url")?.value;
             let svgUrl = svgTextUrl || svgMeta?.reference?.url || svgMeta?.reference?.image?.url;
 
             if (svgUrl) {
@@ -169,17 +171,15 @@ export const action = async ({ request }) => {
               let svgContent = svgCache.get(svgUrl);
               
               if (!svgContent) {
-                console.log(`PDF: Download grafico da: ${svgUrl}`);
+                console.log(`PDF DOWNLOAD: ${svgUrl}`);
                 try {
                   const svgRes = await fetch(svgUrl);
                   if (svgRes.ok) {
                     svgContent = await svgRes.text();
                     svgCache.set(svgUrl, svgContent);
-                  } else {
-                    console.error(`Errore download (${svgRes.status}) per: ${svgUrl}`);
                   }
-                } catch (fetchErr) {
-                  console.error(`Errore fetch grafico per ${item.id}:`, fetchErr.message);
+                } catch (e) {
+                  console.error("Fetch error:", e.message);
                 }
               }
 
