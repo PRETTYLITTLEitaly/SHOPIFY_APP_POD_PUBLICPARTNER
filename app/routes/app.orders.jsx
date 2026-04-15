@@ -27,7 +27,7 @@ export const loader = async ({ request }) => {
     const response = await admin.graphql(
       `#graphql
       query getOrders {
-        orders(first: 50, query: "status:open fulfillment_status:unfulfilled") {
+        orders(first: 30, query: "status:open fulfillment_status:unfulfilled") {
           nodes {
             id
             name
@@ -38,14 +38,28 @@ export const loader = async ({ request }) => {
             tags
             printed: metafield(namespace: "pod", key: "printed") { value }
             approved: metafield(namespace: "pod", key: "status") { value }
-            lineItems(first: 20) {
+            lineItems(first: 10) {
               nodes {
                 id
                 title
                 customAttributes { key value }
                 product {
                   id
-                  metafields(first: 50) {
+                  metafields(first: 10) {
+                    nodes {
+                      namespace
+                      key
+                      value
+                      reference {
+                        ... on GenericFile { url }
+                        ... on MediaImage { image { url } }
+                      }
+                    }
+                  }
+                }
+                variant {
+                  id
+                  metafields(first: 10) {
                     nodes {
                       namespace
                       key
@@ -113,14 +127,14 @@ export const action = async ({ request }) => {
               name
               tags
               status: metafield(namespace: "pod", key: "status") { value }
-              lineItems(first: 20) {
+              lineItems(first: 10) {
                 nodes {
                   id
                   title
                   quantity
                   product {
                     id
-                    metafields(first: 50) {
+                    metafields(first: 10) {
                       nodes {
                         namespace
                         key
@@ -134,7 +148,7 @@ export const action = async ({ request }) => {
                   }
                   variant {
                     id
-                    metafields(first: 50) {
+                    metafields(first: 10) {
                       nodes {
                         namespace
                         key
