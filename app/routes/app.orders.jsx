@@ -26,54 +26,7 @@ export const loader = async ({ request }) => {
   const url = new URL(request.url);
   const downloadIds = url.searchParams.get("download");
 
-  if (downloadIds) {
-    try {
-      const selectedIds = JSON.parse(downloadIds);
-      console.log("--- DOWNLOAD RICHIESTO PER:", selectedIds);
-      
-      // 1. Fetch details for selected orders
-      const ordersDetails = await Promise.all(
-        selectedIds.map(async (orderId) => {
-          console.log(`DIAGNOSTIC: Fetching basic details for ${orderId}`);
-          const response = await admin.graphql(
-            `#graphql
-            query getOrderDetails($id: ID!) {
-              order(id: $id) {
-                id
-                name
-              }
-            }`,
-            { variables: { id: orderId } }
-          );
-          const detailRes = await response.json();
-          return detailRes.data?.order;
-        })
-      );
-
-      const itemsToPack = [];
-      for (const order of ordersDetails) {
-        if (order) {
-          itemsToPack.push({ id: order.id, orderName: order.name });
-        }
-      }
-
-      console.log(`Totale items pronti per il PDF: ${itemsToPack.length}`);
-
-      if (itemsToPack.length > 0) {
-        // DIAGNOSTIC CHANGE: Return JSON instead of PDF
-        return json({ 
-          diagnostic: true, 
-          message: `SUCCESSO: Ho letto correttamente ${itemsToPack.length} grafiche!`,
-          items: itemsToPack.map(i => ({ id: i.id, order: i.orderName }))
-        });
-      } else {
-        return json({ error: "Nessuna grafica valida trovata. Verifica che il prodotto abbia SVG e Dimensioni salvate." }, { status: 400 });
-      }
-    } catch (err) {
-      console.error("ERRORE CRITICO LOADER:", err.stack);
-      return json({ error: "Errore durante il download: " + err.message }, { status: 500 });
-    }
-  }
+  // Loader pulito - Restituisce gli ordini per la tabella
 
   // Normal loader logic...
   const response = await admin.graphql(
@@ -146,95 +99,90 @@ export const action = async ({ request }) => {
     try {
       const selectedIds = JSON.parse(formData.get("orderIds"));
       
-      // 1. Fetch details and SVG content (including approval check)
-      const ordersDetails = await Promise.all(
-        selectedIds.map(async (orderId) => {
-          const response = await admin.graphql(
-            `#graphql
-            query getOrderDetails($id: ID!) {
-              order(id: $id) {
-                id
-                name
-                tags
-                status: metafield(namespace: "pod", key: "status") { value }
-                lineItems(first: 20) {
-                  nodes {
-                    id
-                    title
-                    quantity
-                    product {
-                      metafields(first: 50) {
-                        nodes {
-                          namespace
-                          key
-                          value
-                          reference {
-                            ... on GenericFile { url }
-                            ... on MediaImage { image { url } }
-                          }
+      // 1. FETCH TUTTI GLI ORDINI IN UN'UNICA RICHIESTA (BATCHING)
+      const response = await admin.graphql(
+        `#graphql
+        query getBatchOrders($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on Order {
+              id
+              name
+              tags
+              status: metafield(namespace: "pod", key: "status") { value }
+              lineItems(first: 20) {
+                nodes {
+                  id
+                  title
+                  quantity
+                  product {
+                    metafields(first: 50) {
+                      nodes {
+                        namespace
+                        key
+                        value
+                        reference {
+                          ... on GenericFile { url }
+                          ... on MediaImage { image { url } }
                         }
                       }
                     }
                   }
                 }
               }
-            }`,
-            { variables: { id: orderId } }
-          );
-          const detailRes = await response.json();
-          const order = detailRes.data?.order;
-
-          // SAFETY CHECK
-          const isZepto = order?.tags?.includes("product-personalizer");
-          const isApproved = order?.status?.value === "approved";
-          if (isZepto && !isApproved) {
-             throw new Error(`L'ordine ${order.name} deve essere approvato prima della stampa.`);
+            }
           }
-          
-          if (order) {
-            // Fetch all SVGs for an order in parallel
-            await Promise.all(order.lineItems.nodes.map(async (item) => {
-              const metafields = item.product?.metafields?.nodes || [];
-              const svgMeta = metafields.find(m => m.namespace === "pod" && m.key === "svg");
-              const svgTextUrl = metafields.find(m => m.namespace === "custom" && m.key === "pod_svg_url")?.value;
-              const svgUrl = svgTextUrl || svgMeta?.reference?.url || svgMeta?.reference?.image?.url;
-              
-              if (svgUrl) {
-                try {
-                  const svgRes = await fetch(svgUrl);
-                  item.svgContent = await svgRes.text();
-                } catch (e) {
-                  console.error("PDF: Error fetching SVG from URL:", e);
-                }
-              }
-            }));
-          }
-          return order;
-        })
+        }`,
+        { variables: { ids: selectedIds } }
       );
+      const batchRes = await response.json();
+      const ordersDetails = batchRes.data?.nodes || [];
 
       const itemsToPack = [];
+      const svgCache = new Map(); // CACHE PER NON SCARICARE DOPPIONI
+
       for (const order of ordersDetails) {
         if (!order) continue;
+        
+        // Verifica approvazione Zepto
+        const isZepto = order.tags?.includes("product-personalizer");
+        if (isZepto && order.status?.value !== "approved") {
+          throw new Error(`Ordine ${order.name} non approvato.`);
+        }
+
         for (const item of order.lineItems.nodes) {
           const metafields = item.product?.metafields?.nodes || [];
           const widthVal = metafields.find(m => m.key === "width")?.value;
           const heightVal = metafields.find(m => m.key === "height")?.value;
           
           if (widthVal && heightVal) {
-            // RIPETIZIONE PER QUANTITÀ
-            for (let i = 0; i < item.quantity; i++) {
-              itemsToPack.push({
-                id: `${item.id}-${i}`,
-                orderName: order.name,
-                widthMm: parseFloat(widthVal || "0"),
-                heightMm: parseFloat(heightVal || "0"),
-                svgContent: item.svgContent
-              });
+            const svgMeta = metafields.find(m => m.namespace === "pod" && m.key === "svg");
+            const svgTextUrl = metafields.find(m => m.namespace === "custom" && m.key === "pod_svg_url")?.value;
+            const svgUrl = svgTextUrl || svgMeta?.reference?.url || svgMeta?.reference?.image?.url;
+
+            if (svgUrl) {
+              let svgContent = svgCache.get(svgUrl);
+              
+              if (!svgContent) {
+                console.log(`Downloading (new): ${svgUrl}`);
+                const svgRes = await fetch(svgUrl);
+                svgContent = await svgRes.text();
+                svgCache.set(svgUrl, svgContent);
+              }
+
+              for (let i = 0; i < item.quantity; i++) {
+                itemsToPack.push({
+                  id: `${item.id}-${i}`,
+                  orderName: order.name,
+                  widthMm: parseFloat(widthVal),
+                  heightMm: parseFloat(heightVal),
+                  svgContent: svgContent
+                });
+              }
             }
           }
         }
       }
+
 
       if (itemsToPack.length > 0) {
         const { generatePodPdf } = await import("../lib/pod.server");
