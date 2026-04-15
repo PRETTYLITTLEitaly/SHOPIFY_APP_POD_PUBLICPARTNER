@@ -116,6 +116,7 @@ export const action = async ({ request }) => {
                   title
                   quantity
                   product {
+                    id
                     metafields(first: 50) {
                       nodes {
                         namespace
@@ -136,6 +137,7 @@ export const action = async ({ request }) => {
         { variables: { ids: selectedIds } }
       );
       const batchRes = await response.json();
+      console.log("DIAGNOSTIC BATCH RES (Public):", JSON.stringify(batchRes).substring(0, 500));
       const ordersDetails = batchRes.data?.nodes || [];
 
       const itemsToPack = [];
