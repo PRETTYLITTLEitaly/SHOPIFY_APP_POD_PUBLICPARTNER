@@ -75,10 +75,12 @@ export const loader = async ({ request }) => {
     // Check if it's a Zepto order via tag
     const isZepto = order.tags?.includes("product-personalizer");
     
-    // Check if it's a standard POD order via SVG metafield
+    // Check if it's a standard POD order via SVG metafield or URL
     const hasPodProduct = order.lineItems.nodes.some(item => {
       const metafields = item.product?.metafields?.nodes || [];
-      return metafields.some(m => m.key === "svg" && (m.value || m.reference));
+      const hasSvg = metafields.some(m => m.namespace === "pod" && m.key === "svg" && (m.value || m.reference));
+      const hasUrl = metafields.some(m => m.namespace === "custom" && m.key === "pod_svg_url" && m.value);
+      return hasSvg || hasUrl;
     });
 
     return isZepto || hasPodProduct;
@@ -438,15 +440,18 @@ export default function Orders() {
                   
                   const podItems = order.lineItems.nodes.filter(item => {
                     const metafields = item.product?.metafields?.nodes || [];
-                    return metafields.some(m => m.key === "svg" && (m.value || m.reference));
+                    const hasSvg = metafields.some(m => m.namespace === "pod" && m.key === "svg" && (m.value || m.reference));
+                    const hasUrl = metafields.some(m => m.namespace === "custom" && m.key === "pod_svg_url" && m.value);
+                    return hasSvg || hasUrl;
                   });
 
                   const itemsReady = podItems.filter(item => {
                     const metafields = item.product?.metafields?.nodes || [];
-                    const hasSvg = metafields.some(m => m.key === "svg" && (m.value || m.reference));
-                    const hasWidth = metafields.some(m => m.key === "width" && m.value);
-                    const hasHeight = metafields.some(m => m.key === "height" && m.value);
-                    return hasSvg && hasWidth && hasHeight;
+                    const hasSvg = metafields.some(m => m.namespace === "pod" && m.key === "svg" && (m.value || m.reference));
+                    const hasUrl = metafields.some(m => m.namespace === "custom" && m.key === "pod_svg_url" && m.value);
+                    const hasWidth = metafields.some(m => m.namespace === "pod" && m.key === "width" && m.value);
+                    const hasHeight = metafields.some(m => m.namespace === "pod" && m.key === "height" && m.value);
+                    return (hasSvg || hasUrl) && hasWidth && hasHeight;
                   }).length;
 
                    const isPrinted = printed?.value === "true";
