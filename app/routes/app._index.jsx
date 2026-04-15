@@ -21,20 +21,36 @@ export const loader = async ({ request }) => {
   try {
     const { registerWebhooks } = await import("../shopify.server");
     await registerWebhooks({ session });
-    console.log("Webhooks registrati con successo!");
   } catch (e) {
     console.error("Errore registrazione webhooks:", e);
   }
 
+  // CONTROLLO CONFIGURAZIONE CAMPI (Metafield Definitions)
+  const defsResponse = await admin.graphql(
+    `#graphql
+    query getDefinitions {
+      metafieldDefinitions(first: 20, ownerType: PRODUCT) {
+        nodes { namespace key }
+      }
+    }`
+  );
+  const defsData = await defsResponse.json();
+  const defs = defsData.data?.metafieldDefinitions?.nodes || [];
+  
+  const hasWidth = defs.some(d => d.namespace === "pod" && d.key === "width");
+  const hasHeight = defs.some(d => d.namespace === "pod" && d.key === "height");
+  const hasSvg = defs.some(d => d.namespace === "pod" && d.key === "svg");
+  const hasUrl = defs.some(d => d.namespace === "custom" && d.key === "pod_svg_url");
+  
+  const isConfigured = hasWidth && hasHeight && hasSvg && hasUrl;
+
   const response = await admin.graphql(
     `#graphql
     query getOrderStats {
-      orders(first: 100, query: "fulfillment_status:unfulfilled") {
+      orders(first: 50, query: "fulfillment_status:unfulfilled") {
         nodes {
-          printed: metafield(namespace: "pod", key: "printed") {
-            value
-          }
-          lineItems(first: 20) {
+          printed: metafield(namespace: "pod", key: "printed") { value }
+          lineItems(first: 10) {
             nodes {
               product {
                 metafields(first: 5, namespace: "pod") {
@@ -68,12 +84,55 @@ export const loader = async ({ request }) => {
   const pending = podOrders.filter(o => o.printed?.value !== "true").length;
   const printed = podOrders.filter(o => o.printed?.value === "true").length;
 
-  return json({ pending, printed });
+  return json({ pending, printed, isConfigured });
+};
+
+export const action = async ({ request }) => {
+  const { admin } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const type = formData.get("type");
+
+  if (type === "setup") {
+    const definitions = [
+      { namespace: "pod", key: "width", name: "POD Width", type: "number_decimal", ownerType: "PRODUCT" },
+      { namespace: "pod", key: "height", name: "POD Height", type: "number_decimal", ownerType: "PRODUCT" },
+      { namespace: "pod", key: "svg", name: "POD SVG File", type: "file_reference", ownerType: "PRODUCT" },
+      { namespace: "custom", key: "pod_svg_url", name: "POD SVG URL", type: "single_line_text_field", ownerType: "PRODUCT" },
+      { namespace: "pod", key: "printed", name: "POD Printed", type: "boolean", ownerType: "ORDER" },
+      { namespace: "pod", key: "status", name: "POD Approval Status", type: "single_line_text_field", ownerType: "ORDER" }
+    ];
+
+    for (const def of definitions) {
+      await admin.graphql(
+        `#graphql
+        mutation createMetafieldDefinition($definition: MetafieldDefinitionInput!) {
+          metafieldDefinitionCreate(definition: $definition) {
+            createdDefinition { id name }
+            userErrors { field message }
+          }
+        }`,
+        {
+          variables: {
+            definition: {
+              namespace: def.namespace,
+              key: def.key,
+              name: def.name,
+              type: def.type,
+              ownerType: def.ownerType
+            }
+          }
+        }
+      );
+    }
+    return json({ success: true });
+  }
+  return null;
 };
 
 export default function Index() {
-  const { pending, printed } = useLoaderData();
+  const { pending, printed, isConfigured } = useLoaderData();
   const navigate = useNavigate();
+  const fetcher = useFetcher();
 
   return (
     <Page>
@@ -81,13 +140,26 @@ export default function Index() {
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
+            {!isConfigured && (
+              <Banner title="Configurazione Iniziale" tone="warning" 
+                      action={{content: "Configura Campi POD", onClick: () => fetcher.submit({type: "setup"}, {method: "POST"}), loading: fetcher.state !== "idle"}}>
+                <p>Alcuni campi necessari per il funzionamento (Dimensioni, URL SVG) non sono ancora presenti in questo negozio.</p>
+              </Banner>
+            )}
+
+            {fetcher.data?.success && (
+              <Banner title="Configurazione Completata!" tone="success">
+                <p>Tutti i campi sono stati creati con successo. Ora puoi iniziare a gestire le grafiche.</p>
+              </Banner>
+            )}
+
             <Card>
               <BlockStack gap="400">
                 <Text as="h2" variant="headingMd">
                   Benvenuto nel tuo sistema Print on Demand! 🎉
                 </Text>
                 <Text variant="bodyMd" as="p">
-                  Questa app ti permette di gestire l'impaginazione automatica delle tue grafiche vettoriali direttamente dagli ordini di Shopify.
+                  Gestione automatica delle grafiche DTF e impaginazione intelligente.
                 </Text>
               </BlockStack>
             </Card>
@@ -127,18 +199,15 @@ export default function Index() {
                 <Text variant="headingSm" as="h3">Come iniziare:</Text>
                 <List>
                   <List.Item>
-                    Vai nella sezione <strong>Configurazione</strong> per attivare i campi POD nel tuo catalogo.
+                    Importa il CSV con i dati POD (Dimensioni e URL).
                   </List.Item>
                   <List.Item>
-                    Entra nella pagina di un <strong>Prodotto</strong> su Shopify, carica il file SVG nel campo POD e imposta le dimensioni (es. 100mm).
-                  </List.Item>
-                  <List.Item>
-                    Vai in <strong>Ordini POD</strong>, seleziona gli ordini che vuoi stampare e clicca su "Genera PDF".
+                    Entra nella pagina di un <strong>Prodotto</strong> su Shopify per verificare che i campi siano pieni.
                   </List.Item>
                 </List>
                 
                 <Banner tone="info">
-                  L'app calcolerà automaticamente l'incastro migliore delle grafiche su un foglio di 30cm x 100cm per ridurre al minimo lo spreco di materiale.
+                  L'app caricherà i PDF in automatico prendendoli dai link esterni se il file locale non è presente.
                 </Banner>
               </BlockStack>
             </Card>
