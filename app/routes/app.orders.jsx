@@ -24,10 +24,11 @@ export const loader = async ({ request }) => {
   try {
     const { admin } = await authenticate.admin(request);
     
+    // 1. RECUPERO ORDINI AGGIORNATO (Targeting Diretto + Ordinamento)
     const response = await admin.graphql(
       `#graphql
       query getOrders {
-        orders(first: 15, query: "status:open fulfillment_status:unfulfilled") {
+        orders(first: 20, query: "status:open fulfillment_status:unfulfilled", sortKey: CREATED_AT, reverse: true) {
           nodes {
             id
             name
@@ -45,11 +46,6 @@ export const loader = async ({ request }) => {
                 customAttributes { key value }
                 product {
                   id
-                  metafields(keys: ["pod.width", "pod.height", "pod.svg", "custom.pod_svg_url", "custom.width", "custom.height"]) {
-                    namespace
-                    key
-                    value
-                    reference {
                       ... on GenericFile { url }
                       ... on MediaImage { image { url } }
                     }
@@ -95,12 +91,14 @@ export const loader = async ({ request }) => {
       const isZepto = order.tags?.includes("product-personalizer");
       const hasPodProduct = (order.lineItems?.nodes || []).some(item => {
         const metafields = [
-          ...(item.product?.metafields?.nodes || []),
-          ...(item.variant?.metafields?.nodes || [])
-        ];
-        const hasSvg = metafields.some(m => m.key === "svg" && (m.value || m.reference));
-        const hasUrl = metafields.some(m => m.key === "pod_svg_url" && m.value);
-        return hasSvg || hasUrl;
+          item.product?.pod_width, item.product?.pod_height, item.product?.pod_svg,
+          item.product?.custom_url, item.product?.custom_width, item.product?.custom_height,
+          item.variant?.pod_width, item.variant?.pod_height, item.variant?.pod_svg,
+          item.variant?.custom_url, item.variant?.custom_width, item.variant?.custom_height
+        ].filter(Boolean);
+        const hasSvgStr = metafields.some(m => m.key === "svg" && (m.value || m.reference));
+        const hasUrlStr = metafields.some(m => m.key === "pod_svg_url" || m.key === "pod_url");
+        return hasSvgStr || hasUrlStr;
       });
       return isZepto || hasPodProduct;
     });
@@ -432,6 +430,13 @@ export default function Orders() {
     formData.append("orderIds", JSON.stringify(selectedItems));
     fetcher.submit(formData, { method: "POST" });
   };
+
+  const [sortNewest, setSortNewest] = useState(true);
+  const sortedOrders = [...orders].sort((a, b) => {
+    const dateA = new Date(a.createdAt).getTime();
+    const dateB = new Date(b.createdAt).getTime();
+    return sortNewest ? dateB - dateA : dateA - dateB;
+  });
 
   const totalPodOrders = (orders || []).length;
   const totalPodItems = (orders || []).reduce((acc, order) => {
