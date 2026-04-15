@@ -12,19 +12,14 @@ import {
   Button,
   BlockStack,
   InlineStack,
-  Checkbox,
-  TextField,
 } from "@shopify/polaris";
 import { useState, useEffect } from "react";
 import { authenticate } from "../shopify.server";
-import { PDFDocument, rgb } from "pdf-lib";
-// import { generatePodPdf } from "../lib/pod.server";
 
 export const loader = async ({ request }) => {
   try {
     const { admin } = await authenticate.admin(request);
-    
-    // 1. RECUPERO ORDINI AGGIORNATO (Targeting Diretto + Ordinamento)
+
     const response = await admin.graphql(
       `#graphql
       query getOrders {
@@ -39,39 +34,41 @@ export const loader = async ({ request }) => {
             tags
             printed: metafield(namespace: "pod", key: "printed") { value }
             approved: metafield(namespace: "pod", key: "status") { value }
-            lineItems(first: 5) {
+            lineItems(first: 10) {
               nodes {
                 id
                 title
+                quantity
                 customAttributes { key value }
                 product {
                   id
+                  pod_width: metafield(namespace: "pod", key: "width") { namespace key value }
+                  pod_height: metafield(namespace: "pod", key: "height") { namespace key value }
+                  pod_svg: metafield(namespace: "pod", key: "svg") { 
+                    namespace key value 
+                    reference {
                       ... on GenericFile { url }
                       ... on MediaImage { image { url } }
                     }
                   }
+                  custom_url: metafield(namespace: "custom", key: "pod_svg_url") { namespace key value }
+                  custom_width: metafield(namespace: "custom", key: "width") { namespace key value }
+                  custom_height: metafield(namespace: "custom", key: "height") { namespace key value }
                 }
                 variant {
                   id
-                      key
-                      value
-                      reference {
-                        ... on GenericFile { url }
-                        ... on MediaImage { image { url } }
-                      }
+                  pod_width: metafield(namespace: "pod", key: "width") { namespace key value }
+                  pod_height: metafield(namespace: "pod", key: "height") { namespace key value }
+                  pod_svg: metafield(namespace: "pod", key: "svg") { 
+                    namespace key value 
+                    reference {
+                      ... on GenericFile { url }
+                      ... on MediaImage { image { url } }
                     }
                   }
-                  custom_metafields: metafields(namespace: "custom", first: 5) {
-                    nodes {
-                      namespace
-                      key
-                      value
-                      reference {
-                        ... on GenericFile { url }
-                        ... on MediaImage { image { url } }
-                      }
-                    }
-                  }
+                  custom_url: metafield(namespace: "custom", key: "pod_svg_url") { namespace key value }
+                  custom_width: metafield(namespace: "custom", key: "width") { namespace key value }
+                  custom_height: metafield(namespace: "custom", key: "height") { namespace key value }
                 }
               }
             }
@@ -82,11 +79,8 @@ export const loader = async ({ request }) => {
     );
 
     const data = await response.json();
-    if (data.errors) {
-      return json({ orders: [], error: "GraphQL Error: " + JSON.stringify(data.errors) });
-    }
-
     const allOrders = data.data?.orders?.nodes || [];
+
     const podOrders = allOrders.filter(order => {
       const isZepto = order.tags?.includes("product-personalizer");
       const hasPodProduct = (order.lineItems?.nodes || []).some(item => {
@@ -104,240 +98,26 @@ export const loader = async ({ request }) => {
     });
 
     return json({ orders: podOrders });
-  } catch (err) {
-    console.error("LOADER CRASH:", err);
-    return json({ orders: [], error: err.message });
+  } catch (e) {
+    console.error("Loader error:", e.message);
+    return json({ orders: [], error: e.message });
   }
 };
 
 export const action = async ({ request }) => {
-  console.log("--- INIZIO AZIONE DOWNLOAD PDF ---");
-  const { admin, session } = await authenticate.admin(request);
-  console.log("Autenticazione riuscita per shop:", session.shop);
-
+  const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
   const type = formData.get("type");
 
-  if (type === "generatePdf") {
-    try {
-      const selectedIds = JSON.parse(formData.get("orderIds"));
-      
-      // 1. FETCH TUTTI GLI ORDINI IN UN'UNICA RICHIESTA (BATCHING)
-      const response = await admin.graphql(
-        `#graphql
-        query getBatchOrders($ids: [ID!]!) {
-          nodes(ids: $ids) {
-            ... on Order {
-              id
-              name
-              tags
-              status: metafield(namespace: "pod", key: "status") { value }
-              lineItems(first: 5) {
-                nodes {
-                  id
-                  title
-                  quantity
-                  product {
-                    id
-                    pod_metafields: metafields(namespace: "pod", first: 5) {
-                      nodes {
-                        namespace
-                        key
-                        value
-                        reference {
-                          ... on GenericFile { url }
-                          ... on MediaImage { image { url } }
-                        }
-                      }
-                    }
-                    custom_metafields: metafields(namespace: "custom", first: 5) {
-                      nodes {
-                        namespace
-                        key
-                        value
-                      }
-                    }
-                  }
-                  variant {
-                    id
-                    pod_metafields: metafields(namespace: "pod", first: 5) {
-                      nodes {
-                        namespace
-                        key
-                        value
-                        reference {
-                          ... on GenericFile { url }
-                          ... on MediaImage { image { url } }
-                        }
-                      }
-                    }
-                    custom_metafields: metafields(namespace: "custom", first: 5) {
-                      nodes {
-                        namespace
-                        key
-                        value
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }`,
-        { variables: { ids: selectedIds } }
-      );
-      const batchRes = await response.json();
-      console.log("DIAGNOSTIC BATCH RES (Public):", JSON.stringify(batchRes).substring(0, 500));
-      const ordersDetails = batchRes.data?.nodes || [];
-
-      const itemsToPack = [];
-      const svgCache = new Map(); // CACHE PER NON SCARICARE DOPPIONI
-
-      for (const order of ordersDetails) {
-        if (!order) continue;
-        
-        // Verifica approvazione Zepto
-        const isZepto = order.tags?.includes("product-personalizer");
-        if (isZepto && order.status?.value !== "approved") {
-          throw new Error(`Ordine ${order.name} non approvato.`);
-        }
-
-        for (const item of order.lineItems.nodes) {
-          const metafields = [
-            ...(item.product?.metafields?.nodes || []),
-            ...(item.variant?.metafields?.nodes || [])
-          ];
-          
-          // RICERCA UNIVERSALE (qualsiasi namespace)
-          const widthVal = metafields.find(m => m.key === "width")?.value;
-          const heightVal = metafields.find(m => m.key === "height")?.value;
-          
-          if (widthVal && heightVal) {
-            const svgMeta = metafields.find(m => m.key === "svg");
-            const svgTextUrl = metafields.find(m => m.key === "pod_svg_url")?.value;
-            let svgUrl = svgTextUrl || svgMeta?.reference?.url || svgMeta?.reference?.image?.url;
-
-            if (svgUrl) {
-              // ASSICURA HTTPS PER I LINK CDN
-              if (svgUrl.startsWith("//")) svgUrl = "https:" + svgUrl;
-
-              let svgContent = svgCache.get(svgUrl);
-              
-              if (!svgContent) {
-                console.log(`PDF DOWNLOAD: ${svgUrl}`);
-                try {
-                  const svgRes = await fetch(svgUrl);
-                  if (svgRes.ok) {
-                    svgContent = await svgRes.text();
-                    svgCache.set(svgUrl, svgContent);
-                  }
-                } catch (e) {
-                  console.error("Fetch error:", e.message);
-                }
-              }
-
-              if (svgContent) {
-                for (let i = 0; i < item.quantity; i++) {
-                  itemsToPack.push({
-                    id: `${item.id}-${i}`,
-                    orderName: order.name,
-                    widthMm: parseFloat(widthVal),
-                    heightMm: parseFloat(heightVal),
-                    svgContent: svgContent
-                  });
-                }
-              }
-            }
-          }
-        }
-      }
-
-
-      if (itemsToPack.length > 0) {
-        const { generatePodPdf } = await import("../lib/pod.server");
-        const pdfBuffer = await generatePodPdf(itemsToPack);
-        
-        // AUTO-MARK AS PRINTED
-        for (const id of selectedIds) {
-          await admin.graphql(
-            `#graphql
-            mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-              metafieldsSet(metafields: $metafields) {
-                metafields { id value }
-              }
-            }`,
-            {
-              variables: {
-                metafields: [
-                  {
-                    ownerId: id,
-                    namespace: "pod",
-                    key: "printed",
-                    value: "true",
-                    type: "boolean"
-                  }
-                ]
-              }
-            }
-          );
-        }
-
-        return json({ 
-          success: true, 
-          pdfBase64: pdfBuffer.toString("base64"),
-          fileName: `STAMPA_POD_${new Date().getTime()}.pdf`
-        });
-      } else {
-        return json({ error: "Nessuna grafica trovata (Verifica Width/Height)." }, { status: 400 });
-      }
-    } catch (err) {
-      console.error("ERRORE GENERAZIONE:", err);
-      return json({ error: "Errore durante la creazione del PDF: " + err.message }, { status: 500 });
-    }
-  }
-
-  if (type === "markAsPrinted") {
-    const orderIds = JSON.parse(formData.get("orderIds"));
-    const value = formData.get("value") || "true";
-    console.log(`--- SEGNANDO COME ${value.toUpperCase()}:`, orderIds);
-    for (const id of orderIds) {
-      const response = await admin.graphql(
-        `#graphql
-        mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-          metafieldsSet(metafields: $metafields) {
-            metafields { id value }
-            userErrors { field message }
-          }
-        }`,
-        {
-          variables: {
-            metafields: [
-              {
-                ownerId: id,
-                namespace: "pod",
-                key: "printed",
-                value: value,
-                type: "boolean"
-              }
-            ]
-          }
-        }
-      );
-      const resData = await response.json();
-      console.log(`Risultato per ${id}:`, JSON.stringify(resData.data?.metafieldsSet));
-    }
-    return json({ success: true });
-  }
-
   if (type === "markAsApproved") {
     const orderIds = JSON.parse(formData.get("orderIds"));
-    const value = formData.get("value") || "approved";
+    const value = formData.get("value");
     for (const id of orderIds) {
       await admin.graphql(
         `#graphql
-        mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+        mutation updateOrderMetafield($metafields: [MetafieldsSetInput!]!) {
           metafieldsSet(metafields: $metafields) {
-            metafields { id value }
+            metafields { id }
           }
         }`,
         {
@@ -358,53 +138,239 @@ export const action = async ({ request }) => {
     return json({ success: true });
   }
 
-  if (type === "updateMetafield") {
-    const productId = formData.get("productId");
-    const key = formData.get("key");
+  if (type === "markAsPrinted") {
+    const orderIds = JSON.parse(formData.get("orderIds"));
     const value = formData.get("value");
-
-    const response = await admin.graphql(
-      `#graphql
-      mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-        metafieldsSet(metafields: $metafields) {
-          metafields { id value }
-          userErrors { field message }
+    for (const id of orderIds) {
+      await admin.graphql(
+        `#graphql
+        mutation markAsPrinted($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            metafields { id }
+          }
+        }`,
+        {
+          variables: {
+            metafields: [
+              {
+                ownerId: id,
+                namespace: "pod",
+                key: "printed",
+                value: value,
+                type: "boolean"
+              }
+            ]
+          }
         }
-      }`,
-      {
-        variables: {
-          metafields: [
-            {
-              ownerId: productId,
-              namespace: "pod",
-              key: key,
-              value: value,
-              type: "number_decimal"
-            }
-          ]
-        }
-      }
-    );
-    const res = await response.json();
-    console.log("Metafield aggiornato:", JSON.stringify(res.data?.metafieldsSet));
-    return json(res);
+      );
+    }
+    return json({ success: true });
   }
 
-  return json({ error: "Invalid action type" }, { status: 400 });
-}
+  if (type === "generatePdf") {
+    try {
+      const selectedIds = JSON.parse(formData.get("orderIds"));
+      const response = await admin.graphql(
+        `#graphql
+        query getBatchOrders($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on Order {
+              id
+              name
+              tags
+              status: metafield(namespace: "pod", key: "status") { value }
+              lineItems(first: 10) {
+                nodes {
+                  id
+                  title
+                  quantity
+                  customAttributes { key value }
+                  product {
+                    id
+                    pod_width: metafield(namespace: "pod", key: "width") { namespace key value }
+                    pod_height: metafield(namespace: "pod", key: "height") { namespace key value }
+                    pod_svg: metafield(namespace: "pod", key: "svg") { 
+                      namespace key value 
+                      reference {
+                        ... on GenericFile { url }
+                        ... on MediaImage { image { url } }
+                      }
+                    }
+                    custom_url: metafield(namespace: "custom", key: "pod_svg_url") { namespace key value }
+                    custom_width: metafield(namespace: "custom", key: "width") { namespace key value }
+                    custom_height: metafield(namespace: "custom", key: "height") { namespace key value }
+                  }
+                  variant {
+                    id
+                    pod_width: metafield(namespace: "pod", key: "width") { namespace key value }
+                    pod_height: metafield(namespace: "pod", key: "height") { namespace key value }
+                    pod_svg: metafield(namespace: "pod", key: "svg") { 
+                      namespace key value 
+                      reference {
+                        ... on GenericFile { url }
+                        ... on MediaImage { image { url } }
+                      }
+                    }
+                    custom_url: metafield(namespace: "custom", key: "pod_svg_url") { namespace key value }
+                    custom_width: metafield(namespace: "custom", key: "width") { namespace key value }
+                    custom_height: metafield(namespace: "custom", key: "height") { namespace key value }
+                  }
+                }
+              }
+            }
+          }
+        }`,
+        { variables: { ids: selectedIds } }
+      );
 
-export default function Orders() {
-  const { orders, error } = useLoaderData();
-  const shopify = useAppBridge();
-  const [selectedItems, setSelectedItems] = useState([]);
+      const batchRes = await response.json();
+      const ordersDetails = batchRes.data?.nodes || [];
+      const itemsToPack = [];
+      const svgCache = new Map();
+
+      const colorMap = {
+        "Rosso": "#FF0000",
+        "Nero": "#000000",
+        "Bianco": "#FFFFFF",
+        "Giallo": "#FFFF00",
+        "Verde": "#008000",
+        "Blu": "#0000FF",
+        "Beige": "#F5F5DC"
+      };
+
+      for (const order of ordersDetails) {
+        if (!order) continue;
+        const isZeptoOrder = order.tags?.includes("product-personalizer");
+        if (isZeptoOrder && order.status?.value !== "approved") {
+          throw new Error(`Ordine ${order.name} non approvato.`);
+        }
+
+        for (const item of order.lineItems.nodes) {
+          const metafields = [
+            item.product?.pod_width, item.product?.pod_height, item.product?.pod_svg,
+            item.product?.custom_url, item.product?.custom_width, item.product?.custom_height,
+            item.variant?.pod_width, item.variant?.pod_height, item.variant?.pod_svg,
+            item.variant?.custom_url, item.variant?.custom_width, item.variant?.custom_height
+          ].filter(Boolean);
+
+          const widthVal = metafields.find(m => m.key === "width")?.value;
+          const heightVal = metafields.find(m => m.key === "height")?.value;
+
+          if (widthVal && heightVal) {
+            const svgMeta = metafields.find(m => m.key === "svg");
+            const svgTextUrl = metafields.find(m => m.key === "pod_svg_url" || m.key === "pod_url")?.value;
+            let svgUrl = svgTextUrl || svgMeta?.reference?.url || svgMeta?.reference?.image?.url;
+            let svgContent = null;
+
+            const attrs = item.customAttributes || [];
+            const zeptoText = attrs.find(a => a.key === "Scrivi il testo qui")?.value;
+
+            if (!svgUrl && zeptoText) {
+              const font = attrs.find(a => a.key === "Scegli Font")?.value || "Arial";
+              const colorLabel = attrs.find(a => a.key === "Scegli Colore")?.value || "Nero";
+              const sizeLine = attrs.find(a => a.key.includes("_font size"))?.value || "30";
+              const alignLine = attrs.find(a => a.key.includes("_align"))?.value || "center";
+              const color = colorMap[colorLabel] || colorLabel;
+
+              svgContent = `
+                <svg xmlns="http://www.w3.org/2000/svg" width="${widthVal}mm" height="${heightVal}mm" viewBox="0 0 ${widthVal * 10} ${heightVal * 10}">
+                  <style>
+                    @font-face {
+                      font-family: '${font}';
+                      src: url('/fonts/${font}.ttf');
+                    }
+                  </style>
+                  <text x="${alignLine === 'center' ? '50%' : '10%'}" y="50%" 
+                        text-anchor="${alignLine === 'center' ? 'middle' : 'start'}" 
+                        dominant-baseline="middle" 
+                        font-family="'${font}', Arial" 
+                        font-size="${parseFloat(sizeLine) * 3}" 
+                        fill="${color}">
+                    ${zeptoText}
+                  </text>
+                </svg>`;
+            }
+
+            if (svgUrl && !svgContent) {
+              if (svgUrl.startsWith("//")) svgUrl = "https:" + svgUrl;
+              svgContent = svgCache.get(svgUrl);
+              if (!svgContent) {
+                try {
+                  const svgRes = await fetch(svgUrl);
+                  if (svgRes.ok) {
+                    svgContent = await svgRes.text();
+                    svgCache.set(svgUrl, svgContent);
+                  }
+                } catch (e) {
+                  console.error("Fetch error:", e.message);
+                }
+              }
+            }
+
+            if (svgContent) {
+              for (let i = 0; i < item.quantity; i++) {
+                itemsToPack.push({
+                  id: `${item.id}-${i}`,
+                  orderName: order.name,
+                  widthMm: parseFloat(widthVal),
+                  heightMm: parseFloat(heightVal),
+                  svgContent
+                });
+              }
+            }
+          }
+        }
+      }
+
+      if (itemsToPack.length === 0) throw new Error("Nessuna grafica trovata.");
+
+      for (const id of selectedIds) {
+        await admin.graphql(
+          `#graphql
+          mutation updatePrinted($metafields: [MetafieldsSetInput!]!) {
+            metafieldsSet(metafields: $metafields) {
+              metafields { id }
+            }
+          }`,
+          {
+            variables: {
+              metafields: [
+                {
+                  ownerId: id,
+                  namespace: "pod",
+                  key: "printed",
+                  value: "true",
+                  type: "boolean"
+                }
+              ]
+            }
+          }
+        );
+      }
+
+      const { generatePodPdf } = await import("../lib/pod.server");
+      const pdfBuffer = await generatePodPdf(itemsToPack);
+
+      return json({
+        success: true,
+        pdfBase64: pdfBuffer.toString("base64"),
+        fileName: `STAMPA_POD_${new Date().getTime()}.pdf`
+      });
+    } catch (e) {
+      return json({ error: e.message });
+    }
+  }
+};
+
+export default function OrdersComponent() {
+  const { orders, error: loaderError } = useLoaderData();
   const fetcher = useFetcher();
-
-  // Check for fetcher response
   const actionData = fetcher.data;
+  const [selectedItems, setSelectedItems] = useState([]);
+  const [sortNewest, setSortNewest] = useState(true);
 
   useEffect(() => {
     if (actionData?.success && actionData?.pdfBase64) {
-      console.log("PDF PRONTO (Public) - Avvio download");
       const linkSource = `data:application/pdf;base64,${actionData.pdfBase64}`;
       const downloadLink = document.createElement("a");
       downloadLink.href = linkSource;
@@ -412,13 +378,11 @@ export default function Orders() {
       document.body.appendChild(downloadLink);
       downloadLink.click();
       document.body.removeChild(downloadLink);
-      
       window.shopify?.loading(false);
       setSelectedItems([]);
     }
-
     if (actionData?.error) {
-      alert(`ERRORE SERVER: ${actionData.error}`);
+      alert(`ERRORE: ${actionData.error}`);
       window.shopify?.loading(false);
     }
   }, [actionData]);
@@ -431,39 +395,27 @@ export default function Orders() {
     fetcher.submit(formData, { method: "POST" });
   };
 
-  const [sortNewest, setSortNewest] = useState(true);
-  const sortedOrders = [...orders].sort((a, b) => {
+  const totalPodOrders = (orders || []).length;
+  const totalPodItems = (orders || []).reduce((acc, order) => {
+    return acc + (order.lineItems?.nodes || []).filter(item => {
+      const mf = [item.product?.pod_width, item.product?.pod_svg, item.product?.custom_url].filter(Boolean);
+      return mf.length > 0;
+    }).length;
+  }, 0);
+
+  const sortedOrders = [...(orders || [])].sort((a, b) => {
     const dateA = new Date(a.createdAt).getTime();
     const dateB = new Date(b.createdAt).getTime();
     return sortNewest ? dateB - dateA : dateA - dateB;
   });
 
-  const totalPodOrders = (orders || []).length;
-  const totalPodItems = (orders || []).reduce((acc, order) => {
-    return acc + (order.lineItems?.nodes || []).filter(item => {
-      const metafields = item.product?.metafields?.nodes || [];
-      const hasSvg = metafields.some(m => m.namespace === "pod" && m.key === "svg" && (m.value || m.reference));
-      const hasUrl = metafields.some(m => m.namespace === "custom" && m.key === "pod_svg_url" && m.value);
-      return hasSvg || hasUrl;
-    }).length;
-  }, 0);
-
   return (
-    <Page 
-      title="Ordini Print on Demand"
-      primaryAction={{ content: "Libreria Font", url: "/app/fonts" }}
-    >
+    <Page title="Dashboard Print on Demand">
       <Layout>
-        {error && (
+        {loaderError && (
           <Layout.Section>
             <Card>
-              <BlockStack gap="200">
-                <Text variant="headingMd" as="h2" tone="critical">🚨 ERRORE DI CARICAMENTO (APP PUBBLICA)</Text>
-                <div style={{ padding: "10px", backgroundColor: "#fff4f4", borderRadius: "4px", border: "1px solid #f8d7da" }}>
-                  <Text variant="bodyMd" tone="critical">{error}</Text>
-                  <Text variant="bodyXs" tone="subdued">Controlla i log o contatta l'assistenza.</Text>
-                </div>
-              </BlockStack>
+              <Text variant="headingMd" as="h2" tone="critical">🚨 ERRORE CARICAMENTO: {loaderError}</Text>
             </Card>
           </Layout.Section>
         )}
@@ -473,159 +425,124 @@ export default function Orders() {
             <Card>
               <div style={{ padding: "12px", textAlign: "center" }}>
                 <Text variant="headingLg" as="h2" tone="brand">{totalPodOrders}</Text>
-                <Text variant="bodySm" tone="subdued">Ordini POD in lista</Text>
+                <Text variant="bodySm" tone="subdued">Ordini POD</Text>
               </div>
             </Card>
             <Card>
               <div style={{ padding: "12px", textAlign: "center" }}>
                 <Text variant="headingLg" as="h2" tone="brand">{totalPodItems}</Text>
-                <Text variant="bodySm" tone="subdued">Grafiche totali</Text>
-              </div>
-            </Card>
-            <Card>
-              <div style={{ padding: "12px", textAlign: "center" }}>
-                <Text variant="headingLg" as="h2" tone="success">
-                  {orders.filter(o => o.printed?.value === "true").length}
-                </Text>
-                <Text variant="bodySm" tone="subdued">Già stampati</Text>
+                <Text variant="bodySm" tone="subdued">Grafiche</Text>
               </div>
             </Card>
           </InlineStack>
         </Layout.Section>
 
         <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <InlineStack align="space-between" blockAlign="center">
-                <Text variant="headingMd" as="h2">Ordini da Elaborare</Text>
-                <Button 
-                  variant="primary" 
-                  onClick={handleGenerate} 
-                  disabled={selectedItems.length === 0}
-                  loading={fetcher.state === "submitting"}
-                >
-                  Genera PDF per {selectedItems.length} ordini
-                </Button>
-              </InlineStack>
-
-              {fetcher.data?.error && (
-                <Badge tone="critical">{fetcher.data.error}</Badge>
-              )}
+          <Card padding="0">
+            <BlockStack>
+              <div style={{ padding: "16px", borderBottom: "1px solid #e1e3e5" }}>
+                <InlineStack align="space-between" blockAlign="center">
+                  <InlineStack gap="200" align="center">
+                    <Text variant="headingMd" as="h2">Ordini da Elaborare</Text>
+                    <Button variant="plain" onClick={() => setSortNewest(!sortNewest)}>
+                      {sortNewest ? "⇅ Recenti" : "⇅ Vecchi"}
+                    </Button>
+                  </InlineStack>
+                  <Button
+                    variant="primary"
+                    onClick={handleGenerate}
+                    disabled={selectedItems.length === 0}
+                    loading={fetcher.state === "submitting"}
+                  >
+                    Genera PDF ({selectedItems.length})
+                  </Button>
+                </InlineStack>
+              </div>
 
               <ResourceList
-                resourceName={{ singular: "ordine", plural: "ordini" }}
-                items={orders}
+                resourceName={{ singular: 'ordine', plural: 'ordini' }}
+                items={sortedOrders}
                 selectedItems={selectedItems}
                 onSelectionChange={setSelectedItems}
                 selectable
-                renderItem={(order) => {
-                  const { id, name, createdAt, totalPriceSet, printed, approved, tags } = order;
-                  const date = new Date(createdAt).toLocaleDateString();
-                  
-                  const podItems = (order.lineItems?.nodes || []).filter(item => {
-                    const metafields = item.product?.metafields?.nodes || [];
-                    const hasSvg = metafields.some(m => m.key === "svg" && (m.value || m.reference));
-                    const hasUrl = metafields.some(m => m.key === "pod_svg_url" && m.value);
-                    return hasSvg || hasUrl;
+                renderItem={(item) => {
+                  const { id, name, createdAt, totalPriceSet, printed, approved, tags } = item;
+                  const date = new Date(createdAt).toLocaleDateString('it-IT');
+                  const isPrinted = printed?.value === "true";
+                  const isApproved = approved?.value === "approved";
+                  const isZepto = tags?.includes("product-personalizer");
+
+                  const lineItemsNodes = item.lineItems?.nodes || [];
+                  const podItems = lineItemsNodes.filter(li => {
+                    const mf = [
+                      li.product?.pod_width, li.product?.pod_svg, li.product?.custom_url,
+                      li.variant?.pod_width, li.variant?.pod_svg, li.variant?.custom_url
+                    ].filter(Boolean);
+                    return mf.some(m => m.key === "svg" || m.key === "pod_svg_url" || m.key === "pod_url");
                   });
 
-                  const itemsReady = podItems.filter(item => {
-                    const metafields = item.product?.metafields?.nodes || [];
-                    const hasSvg = metafields.some(m => m.key === "svg" && (m.value || m.reference));
-                    const hasUrl = metafields.some(m => m.key === "pod_svg_url" && m.value);
-                    const hasWidth = metafields.some(m => m.key === "width" && m.value);
-                    const hasHeight = metafields.some(m => m.key === "height" && m.value);
-                    return (hasSvg || hasUrl) && hasWidth && hasHeight;
+                  const itemsReady = podItems.filter(li => {
+                    const mf = [
+                      li.product?.pod_width, li.product?.pod_height, li.product?.pod_svg,
+                      li.product?.custom_url, li.variant?.pod_width, li.variant?.pod_height,
+                      li.variant?.pod_svg, li.variant?.custom_url
+                    ].filter(Boolean);
+                    const hasSvg = mf.some(m => m.key === "svg" || m.key === "pod_svg_url" || m.key === "pod_url");
+                    const hasDim = mf.some(m => m.key === "width") && mf.some(m => m.key === "height");
+                    return hasSvg && hasDim;
                   }).length;
 
-                   const isPrinted = printed?.value === "true";
-                   const isApproved = approved?.value === "approved";
-                   const allTags = tags || [];
-                   const isZepto = allTags.includes("product-personalizer");
-                   const needsReview = isZepto && !isApproved;
+                  return (
+                    <ResourceItem id={id} accessibilityLabel={`Dettagli per ${name}`}>
+                      <InlineStack align="space-between" blockAlign="center">
+                        <div style={{ flex: 1 }}>
+                          <BlockStack gap="050">
+                            <InlineStack gap="200" align="center">
+                              <Text variant="bodyMd" fontWeight="bold">{name}</Text>
+                              {isPrinted && <Badge tone="success" size="small">Stampato</Badge>}
+                              {isZepto && <Badge tone={isApproved ? "success" : "attention"} size="small">Zepto</Badge>}
+                              <Text variant="bodySm" tone="subdued">{date} • {totalPriceSet.shopMoney.amount} {totalPriceSet.shopMoney.currencyCode}</Text>
+                            </InlineStack>
 
-                   return (
-                    <div style={{ 
-                      backgroundColor: needsReview ? "#fffcf5" : (isPrinted ? "#f1f8ed" : "transparent"), 
-                      transition: "background-color 0.5s",
-                      borderLeft: needsReview ? "5px solid #d82c0d" : "none"
-                    }}>
-                      <ResourceItem
-                        id={id}
-                        accessibilityLabel={`Dettagli per ordine ${name}`}
-                      >
-                        <InlineStack align="space-between">
-                          <BlockStack gap="100">
-                            <InlineStack gap="200" blockAlign="center">
-                              <Text variant="bodyMd" fontWeight="bold">
-                                {name}
-                              </Text>
-                              {isPrinted && <Badge tone="success">Stampato ✅</Badge>}
-                              {needsReview && <Badge tone="critical">⚠️ DA REVISIONARE</Badge>}
-                              {!needsReview && isZepto && <Badge tone="info">✅ Approvato</Badge>}
-                            </InlineStack>
-                            <Text variant="bodySm" tone="subdued">
-                              {date} • {totalPriceSet.shopMoney.amount} {totalPriceSet.shopMoney.currencyCode}
-                            </Text>
-                            <InlineStack gap="200">
-                              <Badge tone={itemsReady === podItems.length ? "success" : "warning"}>
-                                {itemsReady} / {podItems.length} grafiche pronte
+                            <InlineStack gap="200" align="center">
+                              <Badge tone={itemsReady === podItems.length && podItems.length > 0 ? "success" : "attention"} size="small">
+                                {itemsReady} / {podItems.length} grafiche
                               </Badge>
-                              <Text variant="bodySm" tone="subdued">
-                                ({order.lineItems.nodes.length} prodotti totali)
-                              </Text>
+                              <Text variant="bodyXs" tone="subdued">({lineItemsNodes.reduce((acc, li) => acc + li.quantity, 0)} prodotti)</Text>
+                              {lineItemsNodes.map(li => {
+                                const zText = li.customAttributes?.find(a => a.key === "Scrivi il testo qui")?.value;
+                                return (
+                                  <div key={li.id} style={{ display: 'inline-flex', marginLeft: '8px' }}>
+                                    <Text variant="bodyXs" tone={zText ? "success" : "subdued"}>
+                                      {zText ? `"${zText}"` : li.title} <strong>(x{li.quantity})</strong>
+                                    </Text>
+                                  </div>
+                                );
+                              })}
                             </InlineStack>
-                            
-                            {/* Personalization Preview */}
-                            <div style={{ marginTop: "8px", padding: "8px", backgroundColor: "#f9f9f9", borderRadius: "4px" }}>
-                              <BlockStack gap="100">
-                                <Text variant="bodyXs" fontWeight="bold" tone="subdued">DETTAGLI PERSONALIZZAZIONE (ZEPTO):</Text>
-                                <div style={{ display: "flex", flexWrap: "wrap", gap: "10px" }}>
-                                  {order.lineItems.nodes.flatMap(li => li.customAttributes || []).map((attr, idx) => (
-                                    <div key={idx} style={{ fontSize: "11px", color: "#555" }}>
-                                      <strong>{attr.key}</strong>: {attr.value.length > 50 ? attr.value.substring(0, 50) + '...' : attr.value}
-                                    </div>
-                                  ))}
-                                  {order.lineItems.nodes.every(li => !li.customAttributes?.length) && (
-                                    <Text variant="bodyXs" tone="subdueditalic">Nessuna personalizzazione trovata per questo ordine.</Text>
-                                  )}
-                                </div>
-                              </BlockStack>
-                            </div>
                           </BlockStack>
-                          
-                          <BlockStack gap="200" align="end">
-                            {isZepto && (
-                              <Button 
-                                variant="primary"
-                                tone={isApproved ? "success" : "critical"}
-                                onClick={() => {
-                                  const formData = new FormData();
-                                  formData.append("type", "markAsApproved");
-                                  formData.append("orderIds", JSON.stringify([id]));
-                                  formData.append("value", isApproved ? "pending" : "approved");
-                                  fetcher.submit(formData, { method: "POST" });
-                                }}
-                              >
-                                {isApproved ? "✅ Approvato" : "Approva Grafica"}
-                              </Button>
-                            )}
-                            <Button 
-                              variant="plain" 
-                              onClick={() => {
-                                const formData = new FormData();
-                                formData.append("type", "markAsPrinted");
-                                formData.append("orderIds", JSON.stringify([id]));
-                                formData.append("value", isPrinted ? "false" : "true");
-                                fetcher.submit(formData, { method: "POST" });
-                              }}
-                            >
-                              {isPrinted ? "Reset Stampa" : "Segna Stampato"}
-                            </Button>
-                          </BlockStack>
+                        </div>
+
+                        <InlineStack gap="100" align="end">
+                          {isZepto && !isApproved && (
+                            <Button size="slim" primary onClick={() => {
+                              const formData = new FormData();
+                              formData.append("type", "markAsApproved");
+                              formData.append("orderIds", JSON.stringify([id]));
+                              formData.append("value", "approved");
+                              fetcher.submit(formData, { method: "POST" });
+                            }}>Approva</Button>
+                          )}
+                          <Button size="slim" onClick={() => {
+                            const formData = new FormData();
+                            formData.append("type", "markAsPrinted");
+                            formData.append("orderIds", JSON.stringify([id]));
+                            formData.append("value", isPrinted ? "false" : "true");
+                            fetcher.submit(formData, { method: "POST" });
+                          }}>{isPrinted ? "Reset" : "Stampato"}</Button>
                         </InlineStack>
-                      </ResourceItem>
-                    </div>
+                      </InlineStack>
+                    </ResourceItem>
                   );
                 }}
               />
