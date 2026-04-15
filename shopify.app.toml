@@ -1,8 +1,8 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-client_id = "e57f759d40be780acfc45add729cac53"
-name = "pod-generator-dtf-public-1"
-application_url = "https://pod-app-nu.vercel.app/"
+client_id = "cfdfa83f675e437847bb8701cfb1e293"
+name = "pod-generator-dtf-public-final"
+application_url = "https://shopify-app-pod-publicpartner.vercel.app"
 embedded = true
 
 [build]
@@ -25,6 +25,6 @@ scopes = "read_products,write_products,read_orders,write_orders"
 
 [auth]
 redirect_urls = [
-  "https://pod-app-nu.vercel.app/auth/callback",
-  "https://pod-app-nu.vercel.app/auth/login"
+  "https://shopify-app-pod-publicpartner.vercel.app/auth/callback",
+  "https://shopify-app-pod-publicpartner.vercel.app/auth/login"
 ]
