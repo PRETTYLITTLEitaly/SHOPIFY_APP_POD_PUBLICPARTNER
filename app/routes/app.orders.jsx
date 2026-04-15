@@ -73,9 +73,12 @@ export const loader = async ({ request }) => {
     const podOrders = allOrders.filter(order => {
       const isZepto = order.tags?.includes("product-personalizer");
       const hasPodProduct = (order.lineItems?.nodes || []).some(item => {
-        const metafields = item.product?.metafields?.nodes || [];
-        const hasSvg = metafields.some(m => m.namespace === "pod" && m.key === "svg" && (m.value || m.reference));
-        const hasUrl = metafields.some(m => m.namespace === "custom" && m.key === "pod_svg_url" && m.value);
+        const metafields = [
+          ...(item.product?.metafields?.nodes || []),
+          ...(item.variant?.metafields?.nodes || [])
+        ];
+        const hasSvg = metafields.some(m => m.key === "svg" && (m.value || m.reference));
+        const hasUrl = metafields.some(m => m.key === "pod_svg_url" && m.value);
         return hasSvg || hasUrl;
       });
       return isZepto || hasPodProduct;
@@ -129,6 +132,20 @@ export const action = async ({ request }) => {
                       }
                     }
                   }
+                  variant {
+                    id
+                    metafields(first: 50) {
+                      nodes {
+                        namespace
+                        key
+                        value
+                        reference {
+                          ... on GenericFile { url }
+                          ... on MediaImage { image { url } }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -153,7 +170,10 @@ export const action = async ({ request }) => {
         }
 
         for (const item of order.lineItems.nodes) {
-          const metafields = item.product?.metafields?.nodes || [];
+          const metafields = [
+            ...(item.product?.metafields?.nodes || []),
+            ...(item.variant?.metafields?.nodes || [])
+          ];
           
           // RICERCA UNIVERSALE (qualsiasi namespace)
           const widthVal = metafields.find(m => m.key === "width")?.value;
