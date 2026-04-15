@@ -27,7 +27,7 @@ export const loader = async ({ request }) => {
     const response = await admin.graphql(
       `#graphql
       query getOrders {
-        orders(first: 30, query: "status:open fulfillment_status:unfulfilled") {
+        orders(first: 15, query: "status:open fulfillment_status:unfulfilled") {
           nodes {
             id
             name
@@ -38,14 +38,25 @@ export const loader = async ({ request }) => {
             tags
             printed: metafield(namespace: "pod", key: "printed") { value }
             approved: metafield(namespace: "pod", key: "status") { value }
-            lineItems(first: 10) {
+            lineItems(first: 5) {
               nodes {
                 id
                 title
                 customAttributes { key value }
                 product {
                   id
-                  metafields(first: 10) {
+                  pod_metafields: metafields(namespace: "pod", first: 5) {
+                    nodes {
+                      namespace
+                      key
+                      value
+                      reference {
+                        ... on GenericFile { url }
+                        ... on MediaImage { image { url } }
+                      }
+                    }
+                  }
+                  custom_metafields: metafields(namespace: "custom", first: 5) {
                     nodes {
                       namespace
                       key
@@ -59,7 +70,18 @@ export const loader = async ({ request }) => {
                 }
                 variant {
                   id
-                  metafields(first: 10) {
+                  pod_metafields: metafields(namespace: "pod", first: 5) {
+                    nodes {
+                      namespace
+                      key
+                      value
+                      reference {
+                        ... on GenericFile { url }
+                        ... on MediaImage { image { url } }
+                      }
+                    }
+                  }
+                  custom_metafields: metafields(namespace: "custom", first: 5) {
                     nodes {
                       namespace
                       key
@@ -75,7 +97,8 @@ export const loader = async ({ request }) => {
             }
           }
         }
-      }`
+      }
+      `
     );
 
     const data = await response.json();
