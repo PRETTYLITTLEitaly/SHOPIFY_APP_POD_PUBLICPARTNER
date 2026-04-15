@@ -45,34 +45,18 @@ export const loader = async ({ request }) => {
                 customAttributes { key value }
                 product {
                   id
-                  pod_metafields: metafields(namespace: "pod", first: 5) {
-                    nodes {
-                      namespace
-                      key
-                      value
-                      reference {
-                        ... on GenericFile { url }
-                        ... on MediaImage { image { url } }
-                      }
-                    }
-                  }
-                  custom_metafields: metafields(namespace: "custom", first: 5) {
-                    nodes {
-                      namespace
-                      key
-                      value
-                      reference {
-                        ... on GenericFile { url }
-                        ... on MediaImage { image { url } }
-                      }
+                  metafields(keys: ["pod.width", "pod.height", "pod.svg", "custom.pod_svg_url", "custom.width", "custom.height"]) {
+                    namespace
+                    key
+                    value
+                    reference {
+                      ... on GenericFile { url }
+                      ... on MediaImage { image { url } }
                     }
                   }
                 }
                 variant {
                   id
-                  pod_metafields: metafields(namespace: "pod", first: 5) {
-                    nodes {
-                      namespace
                       key
                       value
                       reference {
