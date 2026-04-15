@@ -459,19 +459,19 @@ export default function Orders() {
                   const { id, name, createdAt, totalPriceSet, printed, approved, tags } = order;
                   const date = new Date(createdAt).toLocaleDateString();
                   
-                  const podItems = order.lineItems.nodes.filter(item => {
+                  const podItems = (order.lineItems?.nodes || []).filter(item => {
                     const metafields = item.product?.metafields?.nodes || [];
-                    const hasSvg = metafields.some(m => m.namespace === "pod" && m.key === "svg" && (m.value || m.reference));
-                    const hasUrl = metafields.some(m => m.namespace === "custom" && m.key === "pod_svg_url" && m.value);
+                    const hasSvg = metafields.some(m => m.key === "svg" && (m.value || m.reference));
+                    const hasUrl = metafields.some(m => m.key === "pod_svg_url" && m.value);
                     return hasSvg || hasUrl;
                   });
 
                   const itemsReady = podItems.filter(item => {
                     const metafields = item.product?.metafields?.nodes || [];
-                    const hasSvg = metafields.some(m => m.namespace === "pod" && m.key === "svg" && (m.value || m.reference));
-                    const hasUrl = metafields.some(m => m.namespace === "custom" && m.key === "pod_svg_url" && m.value);
-                    const hasWidth = metafields.some(m => m.namespace === "pod" && m.key === "width" && m.value);
-                    const hasHeight = metafields.some(m => m.namespace === "pod" && m.key === "height" && m.value);
+                    const hasSvg = metafields.some(m => m.key === "svg" && (m.value || m.reference));
+                    const hasUrl = metafields.some(m => m.key === "pod_svg_url" && m.value);
+                    const hasWidth = metafields.some(m => m.key === "width" && m.value);
+                    const hasHeight = metafields.some(m => m.key === "height" && m.value);
                     return (hasSvg || hasUrl) && hasWidth && hasHeight;
                   }).length;
 
