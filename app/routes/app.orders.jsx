@@ -198,12 +198,13 @@ export const action = async ({ request }) => {
               const svgMeta = metafields.find(m => m.namespace === "pod" && m.key === "svg");
               const svgTextUrl = metafields.find(m => m.namespace === "custom" && m.key === "pod_svg_url")?.value;
               const svgUrl = svgTextUrl || svgMeta?.reference?.url || svgMeta?.reference?.image?.url;
+              
               if (svgUrl) {
                 try {
                   const svgRes = await fetch(svgUrl);
                   item.svgContent = await svgRes.text();
                 } catch (e) {
-                  console.error(`Errore fetch SVG per ${item.id}:`, e.message);
+                  console.error("PDF: Error fetching SVG from URL:", e);
                 }
               }
             }));
@@ -221,13 +222,16 @@ export const action = async ({ request }) => {
           const heightVal = metafields.find(m => m.key === "height")?.value;
           
           if (widthVal && heightVal) {
-            itemsToPack.push({
-              id: item.id,
-              orderName: order.name,
-              widthMm: parseFloat(widthVal),
-              heightMm: parseFloat(heightVal),
-              svgContent: item.svgContent
-            });
+            // RIPETIZIONE PER QUANTITÀ
+            for (let i = 0; i < item.quantity; i++) {
+              itemsToPack.push({
+                id: `${item.id}-${i}`,
+                orderName: order.name,
+                widthMm: parseFloat(widthVal || "0"),
+                heightMm: parseFloat(heightVal || "0"),
+                svgContent: item.svgContent
+              });
+            }
           }
         }
       }
