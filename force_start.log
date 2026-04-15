@@ -1,0 +1,13 @@
+node:internal/fs/promises:552
+    const bytesRead = (await PromisePrototypeThen(
+                       ^
+
+Error: ECANCELED: operation canceled, read
+    at async readFileHandle (node:internal/fs/promises:552:24)
+    at async file:///Users/lucavitale/Desktop/ANTIGRAVITT/SHOPIFYAPP/node_modules/@shopify/cli/dist/index.js:4331:22705 {
+  errno: -89,
+  code: 'ECANCELED',
+  syscall: 'read'
+}
+
+Node.js v25.6.1

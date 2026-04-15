@@ -1,0 +1,11 @@
+
+> dev
+> shopify app dev --non-interactive --store plit-dev-store.myshopify.com
+
+╭─ error ──────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│  Nonexistent flag: --non-interactive                                         │
+│  See more help with --help                                                   │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+

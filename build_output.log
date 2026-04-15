@@ -1,0 +1,5 @@
+
+> build
+> prisma generate && prisma db push --accept-data-loss && remix vite:build
+
+sh: line 1: 70442 Terminated: 15          prisma generate
