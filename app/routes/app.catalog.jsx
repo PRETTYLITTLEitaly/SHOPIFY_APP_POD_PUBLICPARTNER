@@ -21,7 +21,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url);
   const vendor = url.searchParams.get("vendor");
   const status = url.searchParams.get("status") || "active";
@@ -40,7 +40,7 @@ export const loader = async ({ request }) => {
           title
           vendor
           featuredImage { url }
-          metafields(first: 50) {
+          metafields(first: 20) {
             nodes {
               namespace
               key
@@ -65,59 +65,27 @@ export const loader = async ({ request }) => {
   );
 
   const data = await response.json();
-  const products = data.data.products.nodes;
-  const vendors = data.data.shop.productVendors.nodes;
+  const products = data.data.products.nodes || [];
+  const vendors = data.data.shop.productVendors.nodes || [];
 
-  const processedProducts = await Promise.all(products.map(async (product) => {
+  const processedProducts = products.map((product) => {
     const metafields = product.metafields.nodes || [];
     const svgMeta = metafields.find(m => m.namespace === "pod" && m.key === "svg");
-    const svgTextUrl = metafields.find(m => m.namespace === "custom" && m.key === "pod_svg_url")?.value;
+    const svgTextUrl = metafields.find(m => (m.namespace === "custom" && m.key === "pod_svg_url") || (m.namespace === "pod" && m.key === "svg_url"))?.value;
     const svgUrl = svgTextUrl || svgMeta?.reference?.url || svgMeta?.reference?.image?.url;
-    const mediaImage = svgMeta?.reference?.image;
     
     let ratio = 1;
-    let intrinsicW = "";
-    let intrinsicH = "";
-
+    const mediaImage = svgMeta?.reference?.image;
     if (mediaImage && mediaImage.width && mediaImage.height) {
       ratio = mediaImage.width / mediaImage.height;
-      intrinsicW = mediaImage.width.toString();
-      intrinsicH = mediaImage.height.toString();
-    } else if (svgUrl) {
-      try {
-        const res = await fetch(svgUrl);
-        const text = await res.text();
-        const vb = text.match(/viewBox=["']\s*(-?\d*\.?\d+)[,\s]+(-?\d*\.?\d+)[,\s]+(\d*\.?\d+)[,\s]+(\d*\.?\d+)\s*["']/i);
-        const wMatch = text.match(/width=["'](\d*\.?\d+)(px|mm|cm|in)?["']/i);
-        const hMatch = text.match(/height=["'](\d*\.?\d+)(px|mm|cm|in)?["']/i);
-
-        let w = 0, h = 0;
-
-        if (wMatch && hMatch) {
-          w = parseFloat(wMatch[1]);
-          h = parseFloat(hMatch[1]);
-          // Basic unit conversion to mm if possible (approximate)
-          if (wMatch[2] === "px") { w = w * 0.264583; h = h * 0.264583; }
-          else if (wMatch[2] === "cm") { w = w * 10; h = h * 10; }
-          else if (wMatch[2] === "in") { w = w * 25.4; h = h * 25.4; }
-        } else if (vb) {
-          w = parseFloat(vb[3]);
-          h = parseFloat(vb[4]);
-        }
-
-        if (h > 0) {
-          ratio = w / h;
-          intrinsicW = w.toFixed(1);
-          intrinsicH = h.toFixed(1);
-        }
-      } catch (e) {
-        console.error("Error parsing SVG for ratio:", e);
-      }
     }
-    return { ...product, svgUrl, ratio, intrinsicW, intrinsicH };
-  }));
 
-  return json({ products: processedProducts, vendors });
+    return { ...product, svgUrl, ratio };
+  });
+
+  const shop = session.shop;
+
+  return json({ products: processedProducts, vendors, shop });
 };
 
 export const action = async ({ request }) => {
@@ -144,7 +112,7 @@ export const action = async ({ request }) => {
   return json(await response.json());
 };
 
-function ProductItem({ product, fetcher, onPreview }) {
+function ProductItem({ product, fetcher, onPreview, shop }) {
   const { id, title, featuredImage, svgUrl, ratio, intrinsicW, intrinsicH, vendor } = product;
   const metafields = product.metafields.nodes || [];
   const initialWidth = metafields.find(m => m.key === "width")?.value || "";
@@ -176,7 +144,16 @@ function ProductItem({ product, fetcher, onPreview }) {
         <InlineStack gap="400" blockAlign="center">
           <Thumbnail source={featuredImage?.url || ""} alt={title} size="large" />
           <BlockStack gap="100">
-            <Text variant="bodyMd" fontWeight="bold">{title}</Text>
+            <InlineStack gap="200" blockAlign="center">
+              <Text variant="bodyMd" fontWeight="bold">{title}</Text>
+              <Button 
+                variant="plain" 
+                onClick={() => window.open(`https://${shop}/admin/products/${id.split("/").pop()}`, "_blank")}
+                title="Apri in Shopify"
+              >
+                🔗
+              </Button>
+            </InlineStack>
             <Text variant="bodySm" tone="subdued">Venditore: {vendor}</Text>
             {svgUrl ? (
               <InlineStack gap="200" blockAlign="center">
@@ -258,7 +235,7 @@ function ProductItem({ product, fetcher, onPreview }) {
 }
 
 export default function Catalog() {
-  const { products, vendors } = useLoaderData();
+  const { products, vendors, shop } = useLoaderData();
   const fetcher = useFetcher();
   const [activePreview, setActivePreview] = useState(null);
   const navigate = useNavigate();
@@ -315,7 +292,7 @@ export default function Catalog() {
                   onSubmit={() => handleFiltersChange(queryValue, vendorSelected, statusSelected)}
                 />
               }
-              renderItem={(p) => <ProductItem product={p} fetcher={fetcher} onPreview={setActivePreview} />}
+              renderItem={(p) => <ProductItem product={p} fetcher={fetcher} onPreview={setActivePreview} shop={shop} />}
             />
           </Card>
         </Layout.Section>

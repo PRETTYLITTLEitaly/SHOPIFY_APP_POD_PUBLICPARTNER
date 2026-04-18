@@ -1,8 +1,8 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "cfdfa83f675e437847bb8701cfb1e293"
-name = "pod-generator-dtf-public-final"
-application_url = "https://shopify-app-pod-publicpartner.vercel.app"
+name = "pod-app-public"
+application_url = "https://shopify-app-pod-publicpartner.vercel.app/"
 embedded = true
 
 [build]
